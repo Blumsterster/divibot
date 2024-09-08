@@ -5,7 +5,7 @@
   "keywords": ["python", "telegram-bot", "stellar"],
   "env": {
     "TELEGRAM_TOKEN": {
-      "description": "7245951823:AAH2_hIVwDSQpYXZoKYxv7PTutc22eUV5Do",
+      "description": "The token for your Telegram bot",
       "required": true
     }
   },
@@ -15,9 +15,7 @@
       "size": "free"
     }
   },
-  "addons": [
-    "heroku-postgresql"
-  ],
+  "addons": [],
   "buildpacks": [
     {
       "url": "heroku/python"
