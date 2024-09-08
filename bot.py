@@ -275,10 +275,15 @@ def calculate_xelon_to_next_tier(balance: float, tier: str) -> float:
         '8': 15701,
         '9': 18601,
         '10': float('inf'),
-        'No Tier': 1875,
+        'No Tier': 1875,  # Update this to 1875, which is the first tier threshold
     }
-    next_tier_balance = next_tier_thresholds.get(tier, float('inf'))
-    return max(0, next_tier_balance - balance)
+
+    if balance == 0:
+        # Special case for zero balance, show the first tier threshold (1875)
+        return next_tier_thresholds['No Tier']
+    else:
+        next_tier_balance = next_tier_thresholds.get(tier, float('inf'))
+        return max(0, next_tier_balance - balance)
 
 def main():
     application = ApplicationBuilder().token("7053305969:AAGEO15sSkMXQGZoKi-3NodCMr_OuYr-opw").build()
