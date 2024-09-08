@@ -96,7 +96,9 @@ async def handle_tiers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         "🔟 <b>Tier 10</b> (Balance: 18601+ XELON)\n"
         "• <b>Dividend Rate:</b> 300%\n"
-        "• <b>Benefit:</b> 300% daily returns on balance."
+        "• <b>Benefit:</b> 300% daily returns on balance.\n\n"
+
+        "• <b>Check our Website Calculator: elonwhip.org</b>"
     )
 
     await update.message.reply_text(tiers_message, parse_mode="HTML")
