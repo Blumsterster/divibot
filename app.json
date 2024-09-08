@@ -1,0 +1,26 @@
+{
+  "name": "divibot",
+  "description": "A Telegram bot to manage XELON dividends and provide updates.",
+  "repository": "https://github.com/Blumsterster/divibot",
+  "keywords": ["python", "telegram-bot", "stellar"],
+  "env": {
+    "TELEGRAM_TOKEN": {
+      "description": "The token for your Telegram bot",
+      "required": true
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "free"
+    }
+  },
+  "addons": [
+    "heroku-postgresql"
+  ],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
