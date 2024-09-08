@@ -259,7 +259,7 @@ def calculate_payment(balance: float) -> tuple:
         dividend_return = balance * dividend_rate
         return '10', f'<b>⚪️Dividend Rate: 300%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     else:
-        return '❌<b>No Tier</b>', '<b>Your balance is too low to qualify for a tier.</b>'
+        return '❌No Tier', '<b>Your balance is too low to qualify for a tier.</b>'
 
 
 # Calculate XELON needed for next tier
