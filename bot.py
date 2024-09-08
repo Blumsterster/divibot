@@ -31,7 +31,7 @@ def get_custom_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_custom_keyboard()  # Get the custom keyboard
     await update.message.reply_text(
-        "🔭*Welcome to the Musk’s lab!*🥼 \n\n🤖My name is *DiviBot* and my purpose here is to help you manage your dividends and track ROI seamlessly. \n⚖️With *DiviBot* you can get real-time updates and make smart investment decisions. You can always use my knowledges to check for the dividend tiers. \n🌎Join my creator’s Telegram channel for insights, and use the buy link to easily purchase *XELON’s* and grow your portfolio by upgrading your tiers!",
+        "🔭*Welcome to the Musk’s lab!*🥼 \n\n🤖My name is *DiviBot* and my purpose here is to help you manage your dividends and track ROI seamlessly. \n\n⚖️With *DiviBot* you can get real-time updates and make smart investment decisions. You can always use my knowledges to check for the dividend tiers. \n\n🌎Join my creator’s Telegram channel for insights, and use the buy link to easily purchase *XELON’s* and grow your portfolio by upgrading your tiers!",
         parse_mode="Markdown",
         reply_markup=keyboard  # Attach the keyboard markup
     )
