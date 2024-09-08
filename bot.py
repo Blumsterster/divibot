@@ -218,49 +218,51 @@ async def handle_lobstr(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Calculate payment and tier
 def calculate_payment(balance: float) -> tuple:
+    # Convert XELON balance to XLM based on the rate of 1 XELON = 0.8 XLM
+    balance_in_xlm = balance * 0.8
+
     if 1875 <= balance <= 3000:
         dividend_rate = 0.70  # 70%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '1', f'<b>⚪️Dividend Rate: 70%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 3001 <= balance <= 4500:
         dividend_rate = 0.85  # 85%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '2', f'<b>⚪️Dividend Rate: 85%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 4501 <= balance <= 5200:
         dividend_rate = 1.00  # 100%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '3', f'<b>⚪️Dividend Rate: 100%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 5201 <= balance <= 7100:
         dividend_rate = 1.15  # 115%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '4', f'<b>⚪️Dividend Rate: 115%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 7101 <= balance <= 9200:
         dividend_rate = 1.30  # 130%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '5', f'<b>⚪️Dividend Rate: 130%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 9201 <= balance <= 11500:
         dividend_rate = 1.50  # 150%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '6', f'<b>⚪️Dividend Rate: 150%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 11501 <= balance <= 13000:
         dividend_rate = 1.80  # 180%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '7', f'<b>⚪️Dividend Rate: 180%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 13001 <= balance <= 15700:
         dividend_rate = 2.10  # 210%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '8', f'<b>⚪️Dividend Rate: 210%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif 15701 <= balance <= 18600:
         dividend_rate = 2.50  # 250%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '9', f'<b>⚪️Dividend Rate: 250%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     elif balance >= 18601:
         dividend_rate = 3.00  # 300%
-        dividend_return = balance * dividend_rate
+        dividend_return = balance_in_xlm * dividend_rate
         return '10', f'<b>⚪️Dividend Rate: 300%</b>\n<b>🟢Dividend Return: {dividend_return:.2f} XLM Daily!</b>'
     else:
         return '❌No Tier', '<b>Your balance is too low to qualify for a tier.</b>'
-
 
 # Calculate XELON needed for next tier
 def calculate_xelon_to_next_tier(balance: float, tier: str) -> float:
