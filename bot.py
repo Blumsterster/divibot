@@ -279,7 +279,7 @@ def calculate_xelon_to_next_tier(balance: float, tier: str) -> float:
     return max(0, next_tier_balance - balance)
 
 def main():
-    application = ApplicationBuilder().token("7245951823:AAH2_hIVwDSQpYXZoKYxv7PTutc22eUV5Do").build()
+    application = ApplicationBuilder().token("7053305969:AAGEO15sSkMXQGZoKi-3NodCMr_OuYr-opw").build()
 
     # Command handlers
     application.add_handler(CommandHandler("start", start))
