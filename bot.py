@@ -210,7 +210,7 @@ async def handle_dividends(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Telegram Channel handler
 async def handle_telegram_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🛩*Join our Telegram Channel: @whipspacex *", parse_mode="Markdown")
+        "🛩*Join our Telegram Channel: @whipspacex *\n\n 👑*Join our Whiplash Family: @Whiplash347*", parse_mode="Markdown")
 
 # LOBSTR handler
 async def handle_lobstr(update: Update, context: ContextTypes.DEFAULT_TYPE):
