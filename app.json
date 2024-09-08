@@ -5,7 +5,7 @@
   "keywords": ["python", "telegram-bot", "stellar"],
   "env": {
     "TELEGRAM_TOKEN": {
-      "description": "The token for your Telegram bot",
+      "description": "7245951823:AAH2_hIVwDSQpYXZoKYxv7PTutc22eUV5Do",
       "required": true
     }
   },
