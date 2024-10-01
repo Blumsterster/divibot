@@ -93,7 +93,7 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "*❌Invalid wallet address.*\n✅Please send a valid Stellar wallet address starting with 'G'.", parse_mode="Markdown")
 
-# Handle wallet click
+# Correct the wallet click handler to show the right balance for XAI
 async def handle_wallet_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -101,24 +101,26 @@ async def handle_wallet_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data.startswith("wallet_"):
         wallet_address = data.split("_", 1)[1]
         try:
+            # Fetch account data from Stellar network
             account = server.accounts().account_id(wallet_address).call()
             balances = account["balances"]
 
-            # Extract XAi balance
+            # Extract XAi balance by checking for the XAI asset
             xai_balance = next(
-                (b["balance"] for b in balances if b.get("asset_code") == "XAI"), "0"
-           )
+                (b["balance"] for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == "GDW4UCJVOUIRLXVY4FWSXQJBCIA3QZPFMVRL3KMAIMTCXASWGBJFRXAI"),
+                "0"  # Default to "0" if the asset is not found
+            )
 
             # Calculate the tier for XAi
             xai_tier, xai_payment = calculate_payment(float(xai_balance))
 
-            # Display the balances and tiers correctly (Markdown formatting)
+            # Display the balances and tiers correctly
             await query.edit_message_text(
-            f"👝 <b>Wallet:</b> {wallet_address}\n"
-            f"📊 <b>XAi Balance:</b> {xai_balance} XAi\n"
-            f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n",
-           parse_mode="HTML"  # Ensure HTML formatting is interpreted correctly
-  )
+                f"👝 <b>Wallet:</b> {wallet_address}\n"
+                f"📊 <b>XAi Balance:</b> {xai_balance} XAi\n"
+                f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n",
+                parse_mode="HTML"
+            )
         except Exception as e:
             await query.edit_message_text(f"Error fetching wallet data: {e}")
 
@@ -219,40 +221,42 @@ async def handle_tiers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send the second message after the first
     await update.message.reply_text(tiers_message_part2, parse_mode="HTML")
 
-# Dividends handler
+# Fix to show the correct balance when calculating dividends
 async def handle_dividends(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     wallets = user_wallets.get(user_id, [])
     if not wallets:
         await update.message.reply_text(
             "*❌ Please add a wallet first by clicking on 💼 WALLET.*", parse_mode="Markdown"
-       )
+        )
         return
     
     # Process each wallet and calculate dividends
     for wallet_address in wallets:
         try:
+            # Fetch account details from the Stellar network
             account = server.accounts().account_id(wallet_address).call()
             balances = account["balances"]
             
-            # Extract XAi balance using the correct asset code
+            # Extract XAi balance using the correct asset code and issuer
             xai_balance = next(
-                (b["balance"] for b in balances if b.get("asset_code") == "XAI"), "0"
-           )
-            
+                (b["balance"] for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == "GDW4UCJVOUIRLXVY4FWSXQJBCIA3QZPFMVRL3KMAIMTCXASWGBJFRXAI"), 
+                "0"  # Default to "0" if XAI asset is not found
+            )
+
             # Convert the balance to a float for calculations
             xai_balance = float(xai_balance)
             
             # Calculate XAi dividend tier and payments
             xai_tier, xai_dividends = calculate_payment(xai_balance)
             
-            # Format the message (use * for bold and remove "")
+            # Format the message
             message = (
-            f"👝 <b>Wallet:</b> {wallet_address}\n"
-            f"📊 <b>XAi Balance:</b> {xai_balance:.2f} XAi\n"
-            f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n"
-            f"{xai_dividends}"  # This will have HTML content returned by calculate_payment
-   )
+                f"👝 <b>Wallet:</b> {wallet_address}\n"
+                f"📊 <b>XAi Balance:</b> {xai_balance:.2f} XAi\n"
+                f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n"
+                f"{xai_dividends}"  # This will have HTML content returned by calculate_payment
+            )
 
             await update.message.reply_text(message, parse_mode="HTML")
         
@@ -411,7 +415,7 @@ def calculate_payment(balance: float) -> tuple:
         return '❌No Tier', '<b>Your balance is too low to qualify for a tier.</b>'
 
 def main():
-    application = ApplicationBuilder().token("7053305969:AAGEO15sSkMXQGZoKi-3NodCMr_OuYr-opw").build()
+    application = ApplicationBuilder().token("7245951823:AAH2_hIVwDSQpYXZoKYxv7PTutc22eUV5Do").build()
 
     # Command handlers
     application.add_handler(CommandHandler("start", start))
