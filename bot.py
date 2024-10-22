@@ -304,7 +304,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>© 6% TESLA</b>: {(balance_in_xlm * 0.06 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.06:.2f} XLM)\n'
             f'<b>🔥 4% XELON</b>: {balance * 0.04:.2f} XELON ({balance_in_xlm * 0.04:.2f} XLM)'
        )
-    elif 151 <= balance <= 600:
+    elif 150.001 <= balance <= 600:
         dividend_rate = 0.052  # 5.2%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '2', (
@@ -313,7 +313,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>🔥 6% XELON</b>: {balance * 0.06:.2f} XELON ({balance_in_xlm * 0.06:.2f} XLM)\n'
             f'<b>⚙️ 4.5% TBC</b>: {(balance_in_xlm * 0.045 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.045:.2f} XLM)'
        )
-    elif 601 <= balance <= 1200:
+    elif 600.001 <= balance <= 1200:
         dividend_rate = 0.08  # 8%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '3', (
@@ -323,7 +323,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>⚙️ 7% TBC</b>: {(balance_in_xlm * 0.07 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.07:.2f} XLM)\n'
             f'<b>🧠 2% NLINK</b>: {(balance_in_xlm * 0.02 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.02:.2f} XLM)'
        )
-    elif 1201 <= balance <= 6000:
+    elif 1200.001 <= balance <= 6000:
         dividend_rate = 0.105  # 10.5%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '4', (
@@ -334,7 +334,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>🧠 3% NLINK</b>: {(balance_in_xlm * 0.03 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.03:.2f} XLM)\n'
             f'<b>✖ 0.07% X</b>: {(balance_in_xlm * 0.0007 / X_PRICE):.5f} X ({balance_in_xlm * 0.0007:.2f} XLM)'
        )
-    elif 6001 <= balance <= 12000:
+    elif 6000.001 <= balance <= 12000:
         dividend_rate = 0.16  # 16%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '5', (
@@ -346,7 +346,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>✖ 0.25% X</b>: {(balance_in_xlm * 0.0025 / X_PRICE):.5f} X ({balance_in_xlm * 0.0025:.2f} XLM)\n'
             f'<b>⭐️ 2.5% STARLINK</b>: {(balance_in_xlm * 0.025 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.025:.2f} XLM)'
        )
-    elif 12001 <= balance <= 28000:
+    elif 12000.001 <= balance <= 28000:
         dividend_rate = 0.28  # 28%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '6', (
@@ -359,7 +359,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>⭐️ 5% STARLINK</b>: {(balance_in_xlm * 0.05 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.05:.2f} XLM)\n'
             f'<b>🆎 6% HYPER</b>: {(balance_in_xlm * 0.06 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.06:.2f} XLM)'
        )
-    elif 28001 <= balance <= 60000:
+    elif 28000.001 <= balance <= 60000:
         dividend_rate = 0.55  # 55%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '7', (
@@ -372,7 +372,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>⭐️ 7% STARLINK</b>: {(balance_in_xlm * 0.07 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.07:.2f} XLM)\n'
             f'<b>🆎 9% HYPER</b>: {(balance_in_xlm * 0.09 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.09:.2f} XLM)'
        )
-    elif 60001 <= balance <= 120000:
+    elif 60000.001 <= balance <= 120000:
         dividend_rate = 1.10  # 110%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '8', (
@@ -385,7 +385,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>⭐️ 10% STARLINK</b>: {(balance_in_xlm * 0.1 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.1:.2f} XLM)\n'
             f'<b>🆎 12% HYPER</b>: {(balance_in_xlm * 0.12 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.12:.2f} XLM)'
        )
-    elif 120001 <= balance <= 300000:
+    elif 120000.001 <= balance <= 300000:
         dividend_rate = 3.70  # 370%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '9', (
@@ -398,7 +398,7 @@ def calculate_payment(balance: float) -> tuple:
             f'<b>⭐️ 15% STARLINK</b>: {(balance_in_xlm * 0.15 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.15:.2f} XLM)\n'
             f'<b>🆎 18% HYPER</b>: {(balance_in_xlm * 0.18 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.18:.2f} XLM)'
        )
-    elif balance > 300001:
+    elif balance > 300000.001:
         dividend_rate = 10.50  # 1050%
         dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
         return '10', (
