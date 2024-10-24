@@ -327,7 +327,18 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     total_dividends = 0  # Initialize total dividends
+    total_xlm_equivalent = 0  # Initialize total XLM equivalent
     message_parts = []
+
+    # Asset prices
+    XAI_PRICE = 3
+    TESLA_PRICE = 1500
+    XELON_PRICE = 0.8
+    TBC_PRICE = 100
+    NLINK_PRICE = 250
+    STARLINK_PRICE = 50
+    HYPER_PRICE = 75
+    X_PRICE = 10
 
     # Iterate over each wallet
     for wallet_address in wallets:
@@ -337,24 +348,15 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             first_xai_date_row = cursor.fetchone()
 
             if not first_xai_date_row or not first_xai_date_row[0]:
-               # print(f"No first transaction date found for wallet: {wallet_address}")
                 message_parts.append(f"👝 Wallet: `{wallet_address}`\n❌ No XAI transactions found in recent history.")
                 continue
 
             first_xai_date = first_xai_date_row[0]
-            print(f"First XAI transaction date fetched from DB: {first_xai_date}")
-
-            # Check for the "No XAI transactions found in recent history" message
-            if "No XAI transactions" in first_xai_date:
-               # print(f"No XAI transactions found for wallet: {wallet_address}")
-                message_parts.append(f"👝 Wallet: `{wallet_address}`\n❌ No XAI transactions found in recent history.")
-                continue
 
             # Get the first XAI transaction date and convert it to a datetime object
             try:
                 first_xai_date_obj = datetime.strptime(first_xai_date, "%Y-%m-%d\n%H:%M:%S UTC")
             except ValueError as e:
-               # print(f"Error parsing date for wallet {wallet_address}: {e}")
                 message_parts.append(f"Error fetching wallet data for `{wallet_address}`: `{e}`\n")
                 continue
 
@@ -363,11 +365,9 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Get the current date in UTC (aware)
             current_date = datetime.now(timezone.utc)
-         #   print(f"Current Date: {current_date}")
 
             # Calculate the number of weeks between the first XAI transaction and today
             weeks_since_first_transaction = max((current_date - first_xai_date_obj).days // 7, 1)
-           # print(f"Weeks Since First Transaction for wallet {wallet_address}: {weeks_since_first_transaction}")
 
             # Fetch account details from Stellar network
             account = server.accounts().account_id(wallet_address).call()
@@ -379,7 +379,6 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "0"  # Default to "0" if the asset is not found
             )
             xai_balance = float(xai_balance)
-           # print(f"XAI Balance for wallet {wallet_address}: {xai_balance}")
 
             if xai_balance == 0:
                 message_parts.append(f"👝 Wallet: `{wallet_address}`\n❌ No XAi balance in this wallet.")
@@ -387,11 +386,11 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Calculate the weekly dividends
             xai_tier, weekly_dividends = calculate_payment(xai_balance)
-          #  print(f"Weekly Dividends for wallet {wallet_address}: {weekly_dividends}")
+           # print(f"Weekly Dividends for wallet {wallet_address}: {weekly_dividends}")
 
             # Ensure weekly_dividends is a list of dictionaries
             if isinstance(weekly_dividends, str):
-              #  print(f"Error: weekly_dividends is a string: {weekly_dividends}")
+               # print(f"Error: weekly_dividends is a string: {weekly_dividends}")
                 continue
 
             # Accumulate dividends based on the number of weeks since the first transaction
@@ -400,30 +399,62 @@ async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Ensure that accumulated dividends are not zero
             if all(dividend == 0 for dividend in accumulated_dividends):
-             #   print(f"Accumulated dividends are all zero for wallet: {wallet_address}")
+                print(f"Accumulated dividends are all zero for wallet: {wallet_address}")
                 continue
+
+            # Calculate XLM equivalent for each dividend
+            accumulated_xlm_equivalents = []
+            total_wallet_xlm = 0  # XLM for this specific wallet
+
+            for dividend, accumulated_dividend in zip(weekly_dividends, accumulated_dividends):
+                asset = dividend['asset']
+                if asset == "XAi":
+                    xlm_value = accumulated_dividend * XAI_PRICE
+                elif asset == "TESLA":
+                    xlm_value = accumulated_dividend * TESLA_PRICE
+                elif asset == "XELON":
+                    xlm_value = accumulated_dividend * XELON_PRICE
+                elif asset == "TBC":
+                    xlm_value = accumulated_dividend * TBC_PRICE
+                elif asset == "NLINK":
+                    xlm_value = accumulated_dividend * NLINK_PRICE
+                elif asset == "X":
+                    xlm_value = accumulated_dividend * X_PRICE
+                elif asset == "STARLINK":
+                    xlm_value = accumulated_dividend * STARLINK_PRICE
+                elif asset == "HYPER":
+                    xlm_value = accumulated_dividend * HYPER_PRICE
+                else:
+                    xlm_value = 0  # If we can't identify the asset
+
+                accumulated_xlm_equivalents.append(xlm_value)
+                total_wallet_xlm += xlm_value
+
+            # Summing all accumulated dividends in XLM
+            total_xlm_equivalent += total_wallet_xlm
+           # print(f"Total XLM equivalent for wallet {wallet_address}: {total_wallet_xlm}")
 
             # Summing all accumulated dividends
             total_dividends += sum(accumulated_dividends)
-          #  print(f"Total Dividends for wallet {wallet_address}: {total_dividends}")
 
             # Create formatted accumulated payment info for display
             accumulated_payment_info = "\n".join([
-                f"{dividend['name']} {dividend['rate']*100:.1f}%: {accumulated_dividend:.5f} {dividend['asset']}"
-                for dividend, accumulated_dividend in zip(weekly_dividends, accumulated_dividends) if isinstance(dividend, dict)
+                f"{dividend['name']} {dividend['rate']*100:.1f}%: {accumulated_dividend:.5f} {dividend['asset']} (≈ {xlm_value:.2f} XLM)"
+                for dividend, accumulated_dividend, xlm_value in zip(weekly_dividends, accumulated_dividends, accumulated_xlm_equivalents)
             ])
 
-            message_parts.append(f"👝 Wallet: {wallet_address}\n📊 Accumulated Dividends for {weeks_since_first_transaction} weeks:\n{accumulated_payment_info}")
+            message_parts.append(f"👝 Wallet: {wallet_address}\n📊 Accumulated Dividends for {weeks_since_first_transaction} weeks:\n{accumulated_payment_info}\n")
 
         except Exception as e:
             message_parts.append(f"Error fetching wallet data for `{wallet_address}`: `{e}`\n")
-          #  print(f"Error encountered for wallet {wallet_address}: {e}")
+           # print(f"Error encountered for wallet {wallet_address}: {e}")
 
     # Prepare and send the final message
     if total_dividends > 0:
         message = (
-            f"💸 <b>Withdrawal option soon available</b>\n\n" +
-            "\n".join(message_parts)
+            f"💸 <b>Withdrawal option soon available</b>\n\n"
+            f"{'\n'.join(message_parts)}"
+            f"\n💰 <b>Total XLM equivalent from all wallets:</b> {total_xlm_equivalent:.2f} XLM"
         )
         await update.message.reply_text(message, parse_mode="HTML")
     else:
