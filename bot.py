@@ -1,3 +1,4 @@
+import sqlite3
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -8,11 +9,31 @@ from telegram.ext import (
     filters,
 )
 from stellar_sdk import Server, Asset
+from datetime import datetime
+from datetime import timezone
+import re
+import asyncio
+import aiohttp
+import certifi
+import ssl
+
+# Initialize SQLite database
+conn = sqlite3.connect('user_data.db', check_same_thread=False)
+cursor = conn.cursor()
+
+# Create the necessary table for storing wallets if it doesn't exist
+cursor.execute('''CREATE TABLE IF NOT EXISTS user_wallets (
+                    user_id INTEGER,
+                    wallet_address TEXT,
+                    first_xai_transaction_date TEXT,
+                    PRIMARY KEY (user_id, wallet_address)
+                 )''')
+conn.commit()
 
 # Initialize Stellar server
 server = Server("https://horizon.stellar.org")
 
-# Example assets (if you still need them in future updates)
+# Example assets
 xai_asset = Asset("XAI", "GDW4UCJVOUIRLXVY4FWSXQJBCIA3QZPFMVRL3KMAIMTCXASWGBJFRXAI")
 x_asset = Asset("X", "GAS4LCHPWEHCWRPR2LAIRCYWGSPSUID7HGYGTAIAR4B5E3SAW7YUQLAX")
 tbc_asset = Asset("TBC", "GA5I7GQNVWGC6ETTA4XUNG6FHNEJ4HEOD363VRMT7SCOAUXQMJBGOTBC")
@@ -20,17 +41,26 @@ nlink_asset = Asset("NLINK", "GBX743B3DQKLE5XUN5Z56GOIVMMXRKQJTIRQSVIY3AH3JJQA53
 starlink_asset = Asset("STARLINK", "GCKUU7BDNL7A4D7JABYE5WSHRXBPQJTKJYAAPEPNYJSV7CHRD5SSLINK")
 hyper_asset = Asset("HYPER", "GCIELJ7SU5DNTLRZLXEANRZ2Q7TBP4FDXAV52NQQWSBFCKSMDNZRHYPR")
 
-# In-memory stores for user data
-user_wallets = {}
+# Function to add wallet to the database
+def add_wallet_to_db(user_id, wallet_address, first_xai_transaction_date):
+    cursor.execute('INSERT OR IGNORE INTO user_wallets (user_id, wallet_address, first_xai_transaction_date) VALUES (?, ?, ?)', 
+                   (user_id, wallet_address, first_xai_transaction_date))
+    conn.commit()
 
-# Custom keyboard with buttons
+# Function to get wallets from the database
+def get_wallets_from_db(user_id):
+    cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = ?', (user_id,))
+    return [row[0] for row in cursor.fetchall()]
+
+# Function to get the custom keyboard
 def get_custom_keyboard():
     keyboard = [
         ["💼 WALLET", "🚀 DIVIDENDS"],
         ["📥 Telegram Channel", "📊 LOBSTR"],
-        ["📈 Check Tiers"]  # Add the "Check Tiers" button
+        ["📈 Check Tiers", "💸WITHDRAW"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,21 +83,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📊 LOBSTR":
         await handle_lobstr(update, context)
     elif text == "📈 Check Tiers":
-        await handle_tiers(update, context)  # Handle the new "Check Tiers" button
+        await handle_tiers(update, context)
     else:
-        # Assume the user is sending a wallet address
         await add_wallet(update, context)
 
-# Wallet button handler (function you need)
+# Wallet button handler (updated with Remove button)
 async def handle_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    wallets = user_wallets.get(user_id, [])
+    wallets = get_wallets_from_db(user_id)
     if not wallets:
         await update.message.reply_text(
             "*❌There is no wallet recorded for your account.*\n✅Please send your Stellar PUBLIC KEY to add it.", parse_mode="Markdown")
     else:
         buttons = [
-            [InlineKeyboardButton(wallet, callback_data=f"wallet_{wallet}")]
+            [
+                InlineKeyboardButton(wallet, callback_data=f"wallet_{wallet}"),
+                InlineKeyboardButton("❌ Remove", callback_data=f"remove_{wallet}")
+            ]
             for wallet in wallets
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -75,55 +107,330 @@ async def handle_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "*👝Here are your wallets:*", parse_mode="Markdown", reply_markup=reply_markup)
         await update.message.reply_text(
             "*✅To add another wallet, please send your Stellar PUBLIC KEY.*", parse_mode="Markdown")
+            
+            # Function to remove wallet from the database
+def remove_wallet_from_db(user_id, wallet_address):
+    cursor.execute('DELETE FROM user_wallets WHERE user_id = ? AND wallet_address = ?', (user_id, wallet_address))
+    conn.commit()
 
-# Add wallet handler
+# Handler for removing a wallet
+async def handle_remove_wallet_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("remove_"):
+        wallet_address = data.split("_", 1)[1]
+        user_id = query.from_user.id  # Use query.from_user to get the user ID
+        remove_wallet_from_db(user_id, wallet_address)
+        
+        # Notify the user that the wallet was removed
+        await query.edit_message_text(f"❌ Wallet {wallet_address} has been removed.")
+        
+        # Show the updated wallet list (this time we need to pass `query` instead of `update`)
+        await handle_wallet(query, context)
+
+# Add a timeout to the fetch call
+from concurrent.futures import ThreadPoolExecutor
+
+executor = ThreadPoolExecutor(max_workers=3)
+
+#FIRST TRANS
+async def get_first_xai_transaction_date(wallet_address):
+    try:
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        cursor = None
+        max_iterations = 5000  # Increase the number of iterations to cover more records if needed
+        iteration = 0
+        batch_size = 90  # Adjust this to make smaller requests for faster processing
+        
+        async with aiohttp.ClientSession() as session:
+            while iteration < max_iterations:
+                # Create URL for operations, paginated with cursor, requesting smaller batches
+                url = f"https://horizon.stellar.org/accounts/{wallet_address}/operations?order=asc&limit={batch_size}"
+                if cursor:
+                    url += f"&cursor={cursor}"
+
+                async with session.get(url, ssl=ssl_context, timeout=10) as response:
+                    if response.status != 200:
+                        return f"Error fetching transaction history: Status Code {response.status}"
+
+                    operations = await response.json()
+                    records = operations.get('_embedded', {}).get('records', [])
+                    if not records:
+                        return "No transactions found."
+
+                    # Search for the first XAI-related buy/sell offer or payment
+                    for record in records:
+                        if record['type'] in ['manage_buy_offer', 'manage_sell_offer', 'create_passive_sell_offer', 'payment', 'path_payment_strict_receive', 'path_payment_strict_send']:
+                            if (
+                                ('asset_code' in record and record['asset_code'] == 'XAI' and record.get('asset_issuer') == xai_asset.issuer) or
+                                ('selling_asset_code' in record and record['selling_asset_code'] == 'XAI' and record.get('selling_asset_issuer') == xai_asset.issuer) or
+                                ('buying_asset_code' in record and record['buying_asset_code'] == 'XAI' and record.get('buying_asset_issuer') == xai_asset.issuer)
+                            ):
+                                # Format the date to the desired output
+                                transaction_date = record['created_at']
+                                formatted_date = datetime.strptime(transaction_date, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d\n%H:%M:%S UTC")
+                                return formatted_date
+
+                    # Prepare for next iteration if there are more records
+                    cursor = records[-1]['paging_token']
+                    iteration += 1
+
+            # If no XAI transaction was found within the limited iterations
+            return "No XAI transactions found in recent history."
+                
+    except aiohttp.ClientError as e:
+        return f"Error: Unable to connect to Horizon API. {e}"
+    except asyncio.TimeoutError:
+        return "Error: Request timed out. Please try again later."
+    except Exception as e:
+        return f"Error fetching transaction history: {e}"
+
+    return None
+    
+# Properly escape special characters in MarkdownV2
+def escape_markdown_v2(text):
+    # Escape all special characters for MarkdownV2
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!\\])', r'\\\1', text)
+
+#AD WALLET
+# Function to add a wallet and fetch the first XAI transaction date
 async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     wallet_address = update.message.text.strip()
-    if wallet_address.startswith("G") and len(wallet_address) == 56:
-        # Validate Stellar address length
-        wallets = user_wallets.setdefault(user_id, [])
-        if wallet_address not in wallets:
-            wallets.append(wallet_address)
-            await update.message.reply_text(
-                f"*✅Wallet {wallet_address} added successfully!*", parse_mode="Markdown")
-        else:
-            await update.message.reply_text("*❌This wallet is already added.*", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(
-            "*❌Invalid wallet address.*\n✅Please send a valid Stellar wallet address starting with 'G'.", parse_mode="Markdown")
 
+    if wallet_address.startswith("G") and len(wallet_address) == 56:
+        # Send an immediate message to notify the user that the fetching process has started
+        await update.message.reply_text("⏳ Fetching your wallet info... Please wait.")
+
+        # Fetch the first XAI transaction date in the same flow
+        first_xai_date = await get_first_xai_transaction_date(wallet_address)
+        
+        # After fetching, continue with adding the wallet to the database
+        if first_xai_date:
+            # Store the wallet and first XAI transaction date in the database
+            add_wallet_to_db(user_id, wallet_address, first_xai_date)
+            
+            # Properly escape special characters in the wallet address for HTML mode
+            escaped_wallet_address = wallet_address.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            await update.message.reply_text(
+                f"✅ Wallet <code>{escaped_wallet_address}</code> added successfully!\n📅 First XAI transaction on: {first_xai_date}",
+                parse_mode="HTML"
+            )
+        else:
+            # If no XAI transactions are found, handle that case
+            escaped_wallet_address = wallet_address.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            await update.message.reply_text(
+                f"✅ Wallet <code>{escaped_wallet_address}</code> added successfully!\n⚠️ No XAI transactions found.",
+                parse_mode="HTML"
+            )
+    else:
+        # If the wallet address is invalid, send an error message
+        await update.message.reply_text(
+            "❌ Invalid wallet address.\nPlease send a valid Stellar wallet address starting with 'G'.",
+            parse_mode="HTML"
+        )
+            
+# Correct the wallet click handler to show the right balance for XAI
 # Correct the wallet click handler to show the right balance for XAI
 async def handle_wallet_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+
     if data.startswith("wallet_"):
         wallet_address = data.split("_", 1)[1]
         try:
             # Fetch account data from Stellar network
             account = server.accounts().account_id(wallet_address).call()
+
+            # Debug: Check account structure
+            print(f"Account data for wallet {wallet_address}: {account}")
+
+            # Check if 'balances' exists in the response and is a list
+            balances = account.get("balances", [])
+            if not isinstance(balances, list):
+                await query.edit_message_text(f"Error: Balances data is not in a list format for {wallet_address}")
+                return
+            
+            # Extract XAi balance, with a fallback of "0" if not found
+            xai_balance = next(
+                (b["balance"] for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == xai_asset.issuer),
+                "0"
+            )
+            
+            # Calculate the XAI dividend tier and payment
+            xai_tier, weekly_dividends = calculate_payment(float(xai_balance))
+
+            # Format the dividend details
+            dividend_info = format_dividends(weekly_dividends)
+
+            # Format the response message
+            message = (
+                f"👝 <b>Wallet:</b> <code>{wallet_address}</code>\n"
+                f"📊 <b>XAi Balance:</b> {xai_balance} XAi\n"
+                f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n"
+                f"🪙 <b>Weekly Dividends:</b>\n{dividend_info}"
+            )
+
+            # Send the formatted response
+            await query.edit_message_text(message, parse_mode="HTML")
+
+        except Exception as e:
+            # In case of an error, display a friendly message
+            await query.edit_message_text(f"Error fetching wallet data: {e}")
+
+# Helper function to format accumulated dividend information based on eligibility and tier
+def format_accumulated_payment_info(accumulated_dividends, tier):
+    # Define the dividend percentages for each tier and token eligibility
+    token_percentage_map = {
+        1: {"xai": 0.035, "tesla": 0.06, "xelon": 0.04, "tbc": None, "nlink": None, "x": None, "starlink": None},
+        2: {"xai": 0.052, "tesla": 0.09, "xelon": 0.06, "tbc": 0.045, "nlink": None, "x": None, "starlink": None},
+        3: {"xai": 0.08, "tesla": 0.13, "xelon": 0.12, "tbc": 0.07, "nlink": 0.02, "x": None, "starlink": None},
+        4: {"xai": 0.105, "tesla": 0.22, "xelon": 0.17, "tbc": 0.09, "nlink": 0.03, "x": 0.0007, "starlink": None},
+        5: {"xai": 0.16, "tesla": 0.42, "xelon": 0.35, "tbc": 0.12, "nlink": 0.06, "x": 0.0025, "starlink": 0.025},
+        # Add other tiers here if applicable
+    }
+
+    # Retrieve the correct percentages for the given tier
+    percentages = token_percentage_map.get(tier, {})
+
+    # Format the dividend information based on eligibility and percentages for the given tier
+    accumulated_payment_info = ""
+    if percentages.get("xai"):
+        accumulated_payment_info += f"<b>👑 {percentages['xai']*100:.1f}% xAI</b>: {accumulated_dividends[0]:.2f} XAi ({accumulated_dividends[0] * XAI_PRICE:.2f} XLM)\n"
+    if percentages.get("tesla"):
+        accumulated_payment_info += f"<b>© {percentages['tesla']*100:.1f}% TESLA</b>: {accumulated_dividends[1]:.5f} TESLA ({accumulated_dividends[1] * TESLA_PRICE:.2f} XLM)\n"
+    if percentages.get("xelon"):
+        accumulated_payment_info += f"<b>🔥 {percentages['xelon']*100:.1f}% XELON</b>: {accumulated_dividends[2]:.2f} XELON ({accumulated_dividends[2] * XELON_PRICE:.2f} XLM)\n"
+    if percentages.get("tbc"):
+        accumulated_payment_info += f"<b>⚙️ {percentages['tbc']*100:.1f}% TBC</b>: {accumulated_dividends[3]:.5f} TBC ({accumulated_dividends[3] * TBC_PRICE:.2f} XLM)\n"
+    if percentages.get("nlink"):
+        accumulated_payment_info += f"<b>🧠 {percentages['nlink']*100:.1f}% NLINK</b>: {accumulated_dividends[4]:.5f} NLINK ({accumulated_dividends[4] * NLINK_PRICE:.2f} XLM)\n"
+    if percentages.get("x"):
+        accumulated_payment_info += f"<b>✖ {percentages['x']*100:.2f}% X</b>: {accumulated_dividends[5]:.5f} X ({accumulated_dividends[5] * X_PRICE:.2f} XLM)\n"
+    if percentages.get("starlink"):
+        accumulated_payment_info += f"<b>⭐️ {percentages['starlink']*100:.2f}% STARLINK</b>: {accumulated_dividends[6]:.5f} STARLINK ({accumulated_dividends[6] * STARLINK_PRICE:.2f} XLM)\n"
+
+    return accumulated_payment_info
+
+#WITHDRAW
+async def handle_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    wallets = get_wallets_from_db(user_id)
+
+    if not wallets:
+        await update.message.reply_text(
+            "*❌ Please add a wallet first by clicking on 💼 WALLET.*", parse_mode="Markdown"
+        )
+        return
+
+    total_dividends = 0  # Initialize total dividends
+    message_parts = []
+
+    # Iterate over each wallet
+    for wallet_address in wallets:
+        try:
+            # Fetch the first XAI transaction date from the database
+            cursor.execute('SELECT first_xai_transaction_date FROM user_wallets WHERE user_id = ? AND wallet_address = ?', (user_id, wallet_address))
+            first_xai_date_row = cursor.fetchone()
+
+            if not first_xai_date_row or not first_xai_date_row[0]:
+               # print(f"No first transaction date found for wallet: {wallet_address}")
+                message_parts.append(f"👝 Wallet: `{wallet_address}`\n❌ No XAI transactions found in recent history.")
+                continue
+
+            first_xai_date = first_xai_date_row[0]
+            print(f"First XAI transaction date fetched from DB: {first_xai_date}")
+
+            # Check for the "No XAI transactions found in recent history" message
+            if "No XAI transactions" in first_xai_date:
+               # print(f"No XAI transactions found for wallet: {wallet_address}")
+                message_parts.append(f"👝 Wallet: `{wallet_address}`\n❌ No XAI transactions found in recent history.")
+                continue
+
+            # Get the first XAI transaction date and convert it to a datetime object
+            try:
+                first_xai_date_obj = datetime.strptime(first_xai_date, "%Y-%m-%d\n%H:%M:%S UTC")
+            except ValueError as e:
+               # print(f"Error parsing date for wallet {wallet_address}: {e}")
+                message_parts.append(f"Error fetching wallet data for `{wallet_address}`: `{e}`\n")
+                continue
+
+            # Convert naive datetime to timezone-aware in UTC
+            first_xai_date_obj = first_xai_date_obj.replace(tzinfo=timezone.utc)
+
+            # Get the current date in UTC (aware)
+            current_date = datetime.now(timezone.utc)
+         #   print(f"Current Date: {current_date}")
+
+            # Calculate the number of weeks between the first XAI transaction and today
+            weeks_since_first_transaction = max((current_date - first_xai_date_obj).days // 7, 1)
+           # print(f"Weeks Since First Transaction for wallet {wallet_address}: {weeks_since_first_transaction}")
+
+            # Fetch account details from Stellar network
+            account = server.accounts().account_id(wallet_address).call()
             balances = account["balances"]
 
             # Extract XAi balance by checking for the XAI asset
             xai_balance = next(
-                (b["balance"] for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == "GDW4UCJVOUIRLXVY4FWSXQJBCIA3QZPFMVRL3KMAIMTCXASWGBJFRXAI"),
+                (b["balance"] for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == xai_asset.issuer),
                 "0"  # Default to "0" if the asset is not found
             )
+            xai_balance = float(xai_balance)
+           # print(f"XAI Balance for wallet {wallet_address}: {xai_balance}")
 
-            # Calculate the tier for XAi
-            xai_tier, xai_payment = calculate_payment(float(xai_balance))
+            if xai_balance == 0:
+                message_parts.append(f"👝 Wallet: `{wallet_address}`\n❌ No XAi balance in this wallet.")
+                continue
 
-            # Display the balances and tiers correctly
-            await query.edit_message_text(
-                f"👝 <b>Wallet:</b> {wallet_address}\n"
-                f"📊 <b>XAi Balance:</b> {xai_balance} XAi\n"
-                f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n",
-                parse_mode="HTML"
-            )
+            # Calculate the weekly dividends
+            xai_tier, weekly_dividends = calculate_payment(xai_balance)
+          #  print(f"Weekly Dividends for wallet {wallet_address}: {weekly_dividends}")
+
+            # Ensure weekly_dividends is a list of dictionaries
+            if isinstance(weekly_dividends, str):
+              #  print(f"Error: weekly_dividends is a string: {weekly_dividends}")
+                continue
+
+            # Accumulate dividends based on the number of weeks since the first transaction
+            accumulated_dividends = [round(value['value'] * weeks_since_first_transaction, 5) for value in weekly_dividends if isinstance(value, dict)]
+           # print(f"Accumulated Dividends for wallet {wallet_address}: {accumulated_dividends}")
+
+            # Ensure that accumulated dividends are not zero
+            if all(dividend == 0 for dividend in accumulated_dividends):
+             #   print(f"Accumulated dividends are all zero for wallet: {wallet_address}")
+                continue
+
+            # Summing all accumulated dividends
+            total_dividends += sum(accumulated_dividends)
+          #  print(f"Total Dividends for wallet {wallet_address}: {total_dividends}")
+
+            # Create formatted accumulated payment info for display
+            accumulated_payment_info = "\n".join([
+                f"{dividend['name']} {dividend['rate']*100:.1f}%: {accumulated_dividend:.5f} {dividend['asset']}"
+                for dividend, accumulated_dividend in zip(weekly_dividends, accumulated_dividends) if isinstance(dividend, dict)
+            ])
+
+            message_parts.append(f"👝 Wallet: {wallet_address}\n📊 Accumulated Dividends for {weeks_since_first_transaction} weeks:\n{accumulated_payment_info}")
+
         except Exception as e:
-            await query.edit_message_text(f"Error fetching wallet data: {e}")
+            message_parts.append(f"Error fetching wallet data for `{wallet_address}`: `{e}`\n")
+          #  print(f"Error encountered for wallet {wallet_address}: {e}")
 
+    # Prepare and send the final message
+    if total_dividends > 0:
+        message = (
+            f"💸 <b>Withdrawal option soon available</b>\n\n" +
+            "\n".join(message_parts)
+        )
+        await update.message.reply_text(message, parse_mode="HTML")
+    else:
+        await update.message.reply_text(
+            "*❌ No accumulated dividends found.*", parse_mode="Markdown"
+        )
+        
 # Tiers and benefits handler (first part)
 async def handle_tiers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tiers_message_part1 = (
@@ -221,26 +528,32 @@ async def handle_tiers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send the second message after the first
     await update.message.reply_text(tiers_message_part2, parse_mode="HTML")
 
-# Fix to show the correct balance when calculating dividends
+# Correct the dividend fetching logic
 async def handle_dividends(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    wallets = user_wallets.get(user_id, [])
+    # Retrieve wallets from the database instead of using user_wallets
+    wallets = get_wallets_from_db(user_id)
+    
     if not wallets:
         await update.message.reply_text(
             "*❌ Please add a wallet first by clicking on 💼 WALLET.*", parse_mode="Markdown"
         )
         return
-    
-    # Process each wallet and calculate dividends
+
     for wallet_address in wallets:
         try:
             # Fetch account details from the Stellar network
             account = server.accounts().account_id(wallet_address).call()
-            balances = account["balances"]
-            
+
+            # Check if 'balances' exists in the response and is a list
+            balances = account.get("balances", [])
+            if not isinstance(balances, list):
+                await update.message.reply_text(f"Error: Balances data is not in a list format for {wallet_address}")
+                continue
+
             # Extract XAi balance using the correct asset code and issuer
             xai_balance = next(
-                (b["balance"] for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == "GDW4UCJVOUIRLXVY4FWSXQJBCIA3QZPFMVRL3KMAIMTCXASWGBJFRXAI"), 
+                (b.get("balance") for b in balances if b.get("asset_code") == "XAI" and b.get("asset_issuer") == xai_asset.issuer),
                 "0"  # Default to "0" if XAI asset is not found
             )
 
@@ -248,14 +561,20 @@ async def handle_dividends(update: Update, context: ContextTypes.DEFAULT_TYPE):
             xai_balance = float(xai_balance)
             
             # Calculate XAi dividend tier and payments
-            xai_tier, xai_dividends = calculate_payment(xai_balance)
+            xai_tier, weekly_dividends = calculate_payment(xai_balance)
             
+            # Format the dividends properly for display
+            dividends_info = "\n".join([
+                f"{dividend['name']} {dividend['rate']*100:.1f}%: {dividend['value']:.2f} {dividend['asset']}"
+                for dividend in weekly_dividends
+            ])
+
             # Format the message
             message = (
                 f"👝 <b>Wallet:</b> {wallet_address}\n"
                 f"📊 <b>XAi Balance:</b> {xai_balance:.2f} XAi\n"
                 f"🌐 <b>XAi Dividend Tier:</b> {xai_tier}\n"
-                f"{xai_dividends}"  # This will have HTML content returned by calculate_payment
+                f"🪙 <b>Weekly Dividends:</b>\n{dividends_info}"
             )
 
             await update.message.reply_text(message, parse_mode="HTML")
@@ -282,7 +601,7 @@ async def handle_lobstr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# Token prices
+# Token prices (assuming these are still accurate, adjust as needed)
 XAI_PRICE = 3  # 1 XAI = 3 XLM
 TESLA_PRICE = 1500  # 1 TESLA = 1500 XLM
 XELON_PRICE = 0.8  # 1 XELON = 0.8 XLM
@@ -292,141 +611,156 @@ STARLINK_PRICE = 50  # 1 STARLINK = 50 XLM
 HYPER_PRICE = 75  # 1 HYPER = 75 XLM
 X_PRICE = 10  # 1 X = 10 XLM
 
-# Calculate payment and tier
-def calculate_payment(balance: float) -> tuple:
-    balance_in_xlm = balance * XELON_PRICE  # Convert XELON balance to XLM
+def calculate_payment(xai_balance: float) -> tuple:
+    """Calculates dividends and assigns tier based on xAI balance."""
+    
+    # Tier 1: 1-150 xAI
+    if 1 <= xai_balance <= 150:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.035, "value": round(xai_balance * 0.035, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 0.06, "value": round(xai_balance * 0.06 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.04, "value": round(xai_balance * 0.04 / XELON_PRICE, 2), "asset": "XELON"}
+        ]
+        return 'Tier 1', dividend_data
+    
+    # Tier 2: 151-600 xAI
+    elif 151 <= xai_balance <= 600:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.052, "value": round(xai_balance * 0.052, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 0.09, "value": round(xai_balance * 0.09 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.06, "value": round(xai_balance * 0.06 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.045, "value": round(xai_balance * 0.045 / TBC_PRICE, 5), "asset": "TBC"}
+        ]
+        return 'Tier 2', dividend_data
 
-    if 1 <= balance <= 150:
-        dividend_rate = 0.035  # 3.5%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '1', (
-            f'<b>👑 3.5% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.035:.2f} XLM)\n'
-            f'<b>© 6% TESLA</b>: {(balance_in_xlm * 0.06 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.06:.2f} XLM)\n'
-            f'<b>🔥 4% XELON</b>: {balance * 0.04:.2f} XELON ({balance_in_xlm * 0.04:.2f} XLM)'
-       )
-    elif 150.001 <= balance <= 600:
-        dividend_rate = 0.052  # 5.2%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '2', (
-            f'<b>👑 5.2% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.052:.2f} XLM)\n'
-            f'<b>© 9% TESLA</b>: {(balance_in_xlm * 0.09 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.09:.2f} XLM)\n'
-            f'<b>🔥 6% XELON</b>: {balance * 0.06:.2f} XELON ({balance_in_xlm * 0.06:.2f} XLM)\n'
-            f'<b>⚙️ 4.5% TBC</b>: {(balance_in_xlm * 0.045 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.045:.2f} XLM)'
-       )
-    elif 600.001 <= balance <= 1200:
-        dividend_rate = 0.08  # 8%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '3', (
-            f'<b>👑 8% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.08:.2f} XLM)\n'
-            f'<b>© 13% TESLA</b>: {(balance_in_xlm * 0.13 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.13:.2f} XLM)\n'
-            f'<b>🔥 12% XELON</b>: {balance * 0.12:.2f} XELON ({balance_in_xlm * 0.12:.2f} XLM)\n'
-            f'<b>⚙️ 7% TBC</b>: {(balance_in_xlm * 0.07 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.07:.2f} XLM)\n'
-            f'<b>🧠 2% NLINK</b>: {(balance_in_xlm * 0.02 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.02:.2f} XLM)'
-       )
-    elif 1200.001 <= balance <= 6000:
-        dividend_rate = 0.105  # 10.5%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '4', (
-            f'<b>👑 10.5% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.105:.2f} XLM)\n'
-            f'<b>© 22% TESLA</b>: {(balance_in_xlm * 0.22 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.22:.2f} XLM)\n'
-            f'<b>🔥 17% XELON</b>: {balance * 0.17:.2f} XELON ({balance_in_xlm * 0.17:.2f} XLM)\n'
-            f'<b>⚙️ 9% TBC</b>: {(balance_in_xlm * 0.09 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.09:.2f} XLM)\n'
-            f'<b>🧠 3% NLINK</b>: {(balance_in_xlm * 0.03 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.03:.2f} XLM)\n'
-            f'<b>✖ 0.07% X</b>: {(balance_in_xlm * 0.0007 / X_PRICE):.5f} X ({balance_in_xlm * 0.0007:.2f} XLM)'
-       )
-    elif 6000.001 <= balance <= 12000:
-        dividend_rate = 0.16  # 16%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '5', (
-            f'<b>👑 16% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.16:.2f} XLM)\n'
-            f'<b>© 42% TESLA</b>: {(balance_in_xlm * 0.42 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.42:.2f} XLM)\n'
-            f'<b>🔥 35% XELON</b>: {balance * 0.35:.2f} XELON ({balance_in_xlm * 0.35:.2f} XLM)\n'
-            f'<b>⚙️ 12% TBC</b>: {(balance_in_xlm * 0.12 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.12:.2f} XLM)\n'
-            f'<b>🧠 6% NLINK</b>: {(balance_in_xlm * 0.06 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.06:.2f} XLM)\n'
-            f'<b>✖ 0.25% X</b>: {(balance_in_xlm * 0.0025 / X_PRICE):.5f} X ({balance_in_xlm * 0.0025:.2f} XLM)\n'
-            f'<b>⭐️ 2.5% STARLINK</b>: {(balance_in_xlm * 0.025 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.025:.2f} XLM)'
-       )
-    elif 12000.001 <= balance <= 28000:
-        dividend_rate = 0.28  # 28%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '6', (
-            f'<b>👑 28% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.28:.2f} XLM)\n'
-            f'<b>© 65% TESLA</b>: {(balance_in_xlm * 0.65 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 0.65:.2f} XLM)\n'
-            f'<b>🔥 52% XELON</b>: {balance * 0.52:.2f} XELON ({balance_in_xlm * 0.52:.2f} XLM)\n'
-            f'<b>⚙️ 22% TBC</b>: {(balance_in_xlm * 0.22 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.22:.2f} XLM)\n'
-            f'<b>🧠 12% NLINK</b>: {(balance_in_xlm * 0.12 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.12:.2f} XLM)\n'
-            f'<b>✖ 0.7% X</b>: {(balance_in_xlm * 0.007 / X_PRICE):.5f} X ({balance_in_xlm * 0.007:.2f} XLM)\n'
-            f'<b>⭐️ 5% STARLINK</b>: {(balance_in_xlm * 0.05 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.05:.2f} XLM)\n'
-            f'<b>🆎 6% HYPER</b>: {(balance_in_xlm * 0.06 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.06:.2f} XLM)'
-       )
-    elif 28000.001 <= balance <= 60000:
-        dividend_rate = 0.55  # 55%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '7', (
-            f'<b>👑 55% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 0.55:.2f} XLM)\n'
-            f'<b>© 105% TESLA</b>: {(balance_in_xlm * 1.05 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 1.05:.2f} XLM)\n'
-            f'<b>🔥 90% XELON</b>: {balance * 0.9:.2f} XELON ({balance_in_xlm * 0.9:.2f} XLM)\n'
-            f'<b>⚙️ 32% TBC</b>: {(balance_in_xlm * 0.32 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.32:.2f} XLM)\n'
-            f'<b>🧠 18% NLINK</b>: {(balance_in_xlm * 0.18 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.18:.2f} XLM)\n'
-            f'<b>✖ 1.2% X</b>: {(balance_in_xlm * 0.012 / X_PRICE):.5f} X ({balance_in_xlm * 0.012:.2f} XLM)\n'
-            f'<b>⭐️ 7% STARLINK</b>: {(balance_in_xlm * 0.07 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.07:.2f} XLM)\n'
-            f'<b>🆎 9% HYPER</b>: {(balance_in_xlm * 0.09 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.09:.2f} XLM)'
-       )
-    elif 60000.001 <= balance <= 120000:
-        dividend_rate = 1.10  # 110%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '8', (
-            f'<b>👑 110% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 1.1:.2f} XLM)\n'
-            f'<b>© 215% TESLA</b>: {(balance_in_xlm * 2.15 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 2.15:.2f} XLM)\n'
-            f'<b>🔥 150% XELON</b>: {balance * 1.5:.2f} XELON ({balance_in_xlm * 1.5:.2f} XLM)\n'
-            f'<b>⚙️ 55% TBC</b>: {(balance_in_xlm * 0.55 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 0.55:.2f} XLM)\n'
-            f'<b>🧠 25% NLINK</b>: {(balance_in_xlm * 0.25 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.25:.2f} XLM)\n'
-            f'<b>✖ 2.5% X</b>: {(balance_in_xlm * 0.025 / X_PRICE):.5f} X ({balance_in_xlm * 0.025:.2f} XLM)\n'
-            f'<b>⭐️ 10% STARLINK</b>: {(balance_in_xlm * 0.1 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.1:.2f} XLM)\n'
-            f'<b>🆎 12% HYPER</b>: {(balance_in_xlm * 0.12 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.12:.2f} XLM)'
-       )
-    elif 120000.001 <= balance <= 300000:
-        dividend_rate = 3.70  # 370%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '9', (
-            f'<b>👑 370% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 3.7:.2f} XLM)\n'
-            f'<b>© 515% TESLA</b>: {(balance_in_xlm * 5.15 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 5.15:.2f} XLM)\n'
-            f'<b>🔥 220% XELON</b>: {balance * 2.2:.2f} XELON ({balance_in_xlm * 2.2:.2f} XLM)\n'
-            f'<b>⚙️ 115% TBC</b>: {(balance_in_xlm * 1.15 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 1.15:.2f} XLM)\n'
-            f'<b>🧠 35% NLINK</b>: {(balance_in_xlm * 0.35 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.35:.2f} XLM)\n'
-            f'<b>✖ 5.5% X</b>: {(balance_in_xlm * 0.055 / X_PRICE):.5f} X ({balance_in_xlm * 0.055:.2f} XLM)\n'
-            f'<b>⭐️ 15% STARLINK</b>: {(balance_in_xlm * 0.15 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.15:.2f} XLM)\n'
-            f'<b>🆎 18% HYPER</b>: {(balance_in_xlm * 0.18 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.18:.2f} XLM)'
-       )
-    elif balance > 300000.001:
-        dividend_rate = 10.50  # 1050%
-        dividend_return = balance_in_xlm * dividend_rate / XAI_PRICE
-        return '10', (
-            f'<b>👑 1050% xAI</b>: {dividend_return:.2f} XAi ({balance_in_xlm * 10.5:.2f} XLM)\n'
-            f'<b>© 2100% TESLA</b>: {(balance_in_xlm * 21.0 / TESLA_PRICE):.5f} TESLA ({balance_in_xlm * 21.0:.2f} XLM)\n'
-            f'<b>🔥 275% XELON</b>: {balance * 2.75:.2f} XELON ({balance_in_xlm * 2.75:.2f} XLM)\n'
-            f'<b>⚙️ 320% TBC</b>: {(balance_in_xlm * 3.20 / TBC_PRICE):.5f} TBC ({balance_in_xlm * 3.20:.2f} XLM)\n'
-            f'<b>🧠 50% NLINK</b>: {(balance_in_xlm * 0.50 / NLINK_PRICE):.5f} NLINK ({balance_in_xlm * 0.50:.2f} XLM)\n'
-            f'<b>✖ 7% X</b>: {(balance_in_xlm * 0.07 / X_PRICE):.5f} X ({balance_in_xlm * 0.07:.2f} XLM)\n'
-            f'<b>⭐️ 25% STARLINK</b>: {(balance_in_xlm * 0.25 / STARLINK_PRICE):.5f} STARLINK ({balance_in_xlm * 0.25:.2f} XLM)\n'
-            f'<b>🆎 30% HYPER</b>: {(balance_in_xlm * 0.30 / HYPER_PRICE):.5f} HYPER ({balance_in_xlm * 0.30:.2f} XLM)'
-       )
+    # Tier 3: 601-1,200 xAI
+    elif 601 <= xai_balance <= 1200:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.08, "value": round(xai_balance * 0.08, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 0.13, "value": round(xai_balance * 0.13 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.12, "value": round(xai_balance * 0.12 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.07, "value": round(xai_balance * 0.07 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.02, "value": round(xai_balance * 0.02 / NLINK_PRICE, 5), "asset": "NLINK"}
+        ]
+        return 'Tier 3', dividend_data
+
+    # Tier 4: 1,201-6,000 xAI
+    elif 1201 <= xai_balance <= 6000:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.105, "value": round(xai_balance * 0.105, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 0.22, "value": round(xai_balance * 0.22 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.17, "value": round(xai_balance * 0.17 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.09, "value": round(xai_balance * 0.09 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.03, "value": round(xai_balance * 0.03 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.0007, "value": round(xai_balance * 0.0007 / X_PRICE, 5), "asset": "X"}
+        ]
+        return 'Tier 4', dividend_data
+
+    # Tier 5: 6,001-12,000 xAI
+    elif 6001 <= xai_balance <= 12000:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.16, "value": round(xai_balance * 0.16, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 0.42, "value": round(xai_balance * 0.42 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.35, "value": round(xai_balance * 0.35 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.12, "value": round(xai_balance * 0.12 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.06, "value": round(xai_balance * 0.06 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.0025, "value": round(xai_balance * 0.0025 / X_PRICE, 5), "asset": "X"},
+            {"name": "⭐ STARLINK", "rate": 0.025, "value": round(xai_balance * 0.025 / STARLINK_PRICE, 5), "asset": "STARLINK"}
+        ]
+        return 'Tier 5', dividend_data
+
+    # Tier 6: 12,001-28,000 xAI
+    elif 12001 <= xai_balance <= 28000:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.28, "value": round(xai_balance * 0.28, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 0.65, "value": round(xai_balance * 0.65 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.52, "value": round(xai_balance * 0.52 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.22, "value": round(xai_balance * 0.22 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.12, "value": round(xai_balance * 0.12 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.007, "value": round(xai_balance * 0.007 / X_PRICE, 5), "asset": "X"},
+            {"name": "⭐ STARLINK", "rate": 0.05, "value": round(xai_balance * 0.05 / STARLINK_PRICE, 5), "asset": "STARLINK"},
+            {"name": "🆎 HYPER", "rate": 0.06, "value": round(xai_balance * 0.06 / HYPER_PRICE, 5), "asset": "HYPER"}
+        ]
+        return 'Tier 6', dividend_data
+
+    # Tier 7: 28,001-60,000 xAI
+    elif 28001 <= xai_balance <= 60000:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 0.55, "value": round(xai_balance * 0.55, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 1.05, "value": round(xai_balance * 1.05 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 0.9, "value": round(xai_balance * 0.9 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.32, "value": round(xai_balance * 0.32 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.18, "value": round(xai_balance * 0.18 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.012, "value": round(xai_balance * 0.012 / X_PRICE, 5), "asset": "X"},
+            {"name": "⭐ STARLINK", "rate": 0.07, "value": round(xai_balance * 0.07 / STARLINK_PRICE, 5), "asset": "STARLINK"},
+            {"name": "🆎 HYPER", "rate": 0.09, "value": round(xai_balance * 0.09 / HYPER_PRICE, 5), "asset": "HYPER"}
+        ]
+        return 'Tier 7', dividend_data
+
+    # Tier 8: 60,001-120,000 xAI
+    elif 60001 <= xai_balance <= 120000:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 1.1, "value": round(xai_balance * 1.1, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 2.15, "value": round(xai_balance * 2.15 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 1.5, "value": round(xai_balance * 1.5 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 0.55, "value": round(xai_balance * 0.55 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.25, "value": round(xai_balance * 0.25 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.025, "value": round(xai_balance * 0.025 / X_PRICE, 5), "asset": "X"},
+            {"name": "⭐ STARLINK", "rate": 0.1, "value": round(xai_balance * 0.1 / STARLINK_PRICE, 5), "asset": "STARLINK"},
+            {"name": "🆎 HYPER", "rate": 0.12, "value": round(xai_balance * 0.12 / HYPER_PRICE, 5), "asset": "HYPER"}
+        ]
+        return 'Tier 8', dividend_data
+
+    # Tier 9: 120,001-300,000 xAI
+    elif 120001 <= xai_balance <= 300000:
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 3.7, "value": round(xai_balance * 3.7, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 5.15, "value": round(xai_balance * 5.15 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 2.2, "value": round(xai_balance * 2.2 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 1.15, "value": round(xai_balance * 1.15 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.35, "value": round(xai_balance * 0.35 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.055, "value": round(xai_balance * 0.055 / X_PRICE, 5), "asset": "X"},
+            {"name": "⭐ STARLINK", "rate": 0.15, "value": round(xai_balance * 0.15 / STARLINK_PRICE, 5), "asset": "STARLINK"},
+            {"name": "🆎 HYPER", "rate": 0.18, "value": round(xai_balance * 0.18 / HYPER_PRICE, 5), "asset": "HYPER"}
+        ]
+        return 'Tier 9', dividend_data
+
+    # Tier 10: 300,001+ xAI
     else:
-        return '❌No Tier', '<b>Your balance is too low to qualify for a tier.</b>'
+        dividend_data = [
+            {"name": "👑 xAI", "rate": 10.5, "value": round(xai_balance * 10.5, 2), "asset": "XAi"},
+            {"name": "© TESLA", "rate": 21, "value": round(xai_balance * 21 / TESLA_PRICE, 5), "asset": "TESLA"},
+            {"name": "🔥 XELON", "rate": 2.75, "value": round(xai_balance * 2.75 / XELON_PRICE, 2), "asset": "XELON"},
+            {"name": "⚙ TBC", "rate": 3.2, "value": round(xai_balance * 3.2 / TBC_PRICE, 5), "asset": "TBC"},
+            {"name": "🧠 NLINK", "rate": 0.5, "value": round(xai_balance * 0.5 / NLINK_PRICE, 5), "asset": "NLINK"},
+            {"name": "✖ X", "rate": 0.07, "value": round(xai_balance * 0.07 / X_PRICE, 5), "asset": "X"},
+            {"name": "⭐ STARLINK", "rate": 0.25, "value": round(xai_balance * 0.25 / STARLINK_PRICE, 5), "asset": "STARLINK"},
+            {"name": "🆎 HYPER", "rate": 0.3, "value": round(xai_balance * 0.3 / HYPER_PRICE, 5), "asset": "HYPER"}
+        ]
+        return 'Tier 10', dividend_data
+
+def format_dividends(dividend_data):
+    formatted_dividends = "\n".join([
+        f"{dividend['name']} {dividend['rate']*100:.1f}%: {dividend['value']:.2f} {dividend['asset']}"
+        for dividend in dividend_data
+    ])
+    return formatted_dividends
 
 def main():
-    application = ApplicationBuilder().token("7053305969:AAGEO15sSkMXQGZoKi-3NodCMr_OuYr-opw").build()
+    application = ApplicationBuilder().token("7642669361:AAFo258DyoS6AV08w7qP0YWPtZw9OMa5pRc").build()
 
     # Command handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.Regex("WITHDRAW"), handle_withdraw))
 
     # Message handler for text messages
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-   )
+    )
 
-    # Callback query handler for inline button clicks
-    application.add_handler(CallbackQueryHandler(handle_wallet_click))
+    # Callback query handlers for wallet clicks and remove button
+    application.add_handler(CallbackQueryHandler(handle_wallet_click, pattern=r'^wallet_'))
+    application.add_handler(CallbackQueryHandler(handle_remove_wallet_click, pattern=r'^remove_'))
 
     application.run_polling()
 
