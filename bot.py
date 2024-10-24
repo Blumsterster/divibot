@@ -1,4 +1,3 @@
-import sqlite3
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,18 +15,25 @@ import asyncio
 import aiohttp
 import certifi
 import ssl
+import psycopg2
+import os
 
-# Initialize SQLite database
-conn = sqlite3.connect('user_data.db', check_same_thread=False)
+# Get the DATABASE_URL from Heroku environment variables
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Connect to PostgreSQL using psycopg2
+conn = psycopg2.connect(DATABASE_URL, sslmode='require')
 cursor = conn.cursor()
 
 # Create the necessary table for storing wallets if it doesn't exist
-cursor.execute('''CREATE TABLE IF NOT EXISTS user_wallets (
-                    user_id INTEGER,
-                    wallet_address TEXT,
-                    first_xai_transaction_date TEXT,
-                    PRIMARY KEY (user_id, wallet_address)
-                 )''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_wallets (
+        user_id BIGINT,
+        wallet_address TEXT,
+        first_xai_transaction_date TEXT,
+        PRIMARY KEY (user_id, wallet_address)
+    )
+''')
 conn.commit()
 
 # Initialize Stellar server
