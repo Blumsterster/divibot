@@ -1,3 +1,4 @@
+import sqlite3
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,25 +16,18 @@ import asyncio
 import aiohttp
 import certifi
 import ssl
-import psycopg2
-import os
 
-# Get the DATABASE_URL from Heroku environment variables
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Connect to PostgreSQL using psycopg2
-conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+# Initialize SQLite database
+conn = sqlite3.connect('user_data.db', check_same_thread=False)
 cursor = conn.cursor()
 
 # Create the necessary table for storing wallets if it doesn't exist
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS user_wallets (
-        user_id BIGINT,
-        wallet_address TEXT,
-        first_xai_transaction_date TEXT,
-        PRIMARY KEY (user_id, wallet_address)
-    )
-''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS user_wallets (
+                    user_id INTEGER,
+                    wallet_address TEXT,
+                    first_xai_transaction_date TEXT,
+                    PRIMARY KEY (user_id, wallet_address)
+                 )''')
 conn.commit()
 
 # Initialize Stellar server
@@ -49,26 +43,14 @@ hyper_asset = Asset("HYPER", "GCIELJ7SU5DNTLRZLXEANRZ2Q7TBP4FDXAV52NQQWSBFCKSMDN
 
 # Function to add wallet to the database
 def add_wallet_to_db(user_id, wallet_address, first_xai_transaction_date):
-    try:
-        cursor.execute('''
-            INSERT INTO user_wallets (user_id, wallet_address, first_xai_transaction_date)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, wallet_address) DO NOTHING
-        ''', (user_id, wallet_address, first_xai_transaction_date))
-        conn.commit()  # Commit transaction on success
-    except Exception as e:
-        print(f"Error adding wallet to DB for user {user_id}: {e}")
-        conn.rollback()  # Rollback transaction if there's an error
+    cursor.execute('INSERT OR IGNORE INTO user_wallets (user_id, wallet_address, first_xai_transaction_date) VALUES (?, ?, ?)', 
+                   (user_id, wallet_address, first_xai_transaction_date))
+    conn.commit()
 
 # Function to get wallets from the database
 def get_wallets_from_db(user_id):
-    try:
-        cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = %s', (user_id,))
-        return [row[0] for row in cursor.fetchall()]
-    except Exception as e:
-        print(f"Error fetching wallets for user {user_id}: {e}")
-        conn.rollback()  # Rollback transaction if there's an error
-        return []
+    cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = ?', (user_id,))
+    return [row[0] for row in cursor.fetchall()]
 
 # Function to get the custom keyboard
 def get_custom_keyboard():
@@ -796,7 +778,7 @@ def format_dividends(dividend_data):
     return formatted_dividends
 
 def main():
-    application = ApplicationBuilder().token("7053305969:AAGEO15sSkMXQGZoKi-3NodCMr_OuYr-opw").build()
+    application = ApplicationBuilder().token("7642669361:AAFo258DyoS6AV08w7qP0YWPtZw9OMa5pRc").build()
 
     # Command handlers
     application.add_handler(CommandHandler("start", start))
