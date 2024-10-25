@@ -49,17 +49,26 @@ hyper_asset = Asset("HYPER", "GCIELJ7SU5DNTLRZLXEANRZ2Q7TBP4FDXAV52NQQWSBFCKSMDN
 
 # Function to add wallet to the database
 def add_wallet_to_db(user_id, wallet_address, first_xai_transaction_date):
-    cursor.execute('''
-    INSERT INTO user_wallets (user_id, wallet_address, first_xai_transaction_date)
-    VALUES (%s, %s, %s)
-    ON CONFLICT (user_id, wallet_address) DO NOTHING
-''', (user_id, wallet_address, first_xai_transaction_date))
-    conn.commit()
+    try:
+        cursor.execute('''
+            INSERT INTO user_wallets (user_id, wallet_address, first_xai_transaction_date)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, wallet_address) DO NOTHING
+        ''', (user_id, wallet_address, first_xai_transaction_date))
+        conn.commit()  # Commit transaction on success
+    except Exception as e:
+        print(f"Error adding wallet to DB for user {user_id}: {e}")
+        conn.rollback()  # Rollback transaction if there's an error
 
 # Function to get wallets from the database
 def get_wallets_from_db(user_id):
-    cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = %s', (user_id,))
-    return [row[0] for row in cursor.fetchall()]
+    try:
+        cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = %s', (user_id,))
+        return [row[0] for row in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error fetching wallets for user {user_id}: {e}")
+        conn.rollback()  # Rollback transaction if there's an error
+        return []
 
 # Function to get the custom keyboard
 def get_custom_keyboard():
