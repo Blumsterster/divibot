@@ -55,7 +55,7 @@ def add_wallet_to_db(user_id, wallet_address, first_xai_transaction_date):
 
 # Function to get wallets from the database
 def get_wallets_from_db(user_id):
-    cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT wallet_address FROM user_wallets WHERE user_id = %s', (user_id,))
     return [row[0] for row in cursor.fetchall()]
 
 # Function to get the custom keyboard
