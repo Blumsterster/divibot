@@ -778,7 +778,7 @@ def format_dividends(dividend_data):
     return formatted_dividends
 
 def main():
-    application = ApplicationBuilder().token("7642669361:AAFo258DyoS6AV08w7qP0YWPtZw9OMa5pRc").build()
+    application = ApplicationBuilder().token("7053305969:AAGEO15sSkMXQGZoKi-3NodCMr_OuYr-opw").build()
 
     # Command handlers
     application.add_handler(CommandHandler("start", start))
