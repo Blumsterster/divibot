@@ -49,8 +49,11 @@ hyper_asset = Asset("HYPER", "GCIELJ7SU5DNTLRZLXEANRZ2Q7TBP4FDXAV52NQQWSBFCKSMDN
 
 # Function to add wallet to the database
 def add_wallet_to_db(user_id, wallet_address, first_xai_transaction_date):
-    cursor.execute('INSERT OR IGNORE INTO user_wallets (user_id, wallet_address, first_xai_transaction_date) VALUES (?, ?, ?)', 
-                   (user_id, wallet_address, first_xai_transaction_date))
+    cursor.execute('''
+    INSERT INTO user_wallets (user_id, wallet_address, first_xai_transaction_date)
+    VALUES (%s, %s, %s)
+    ON CONFLICT (user_id, wallet_address) DO NOTHING
+''', (user_id, wallet_address, first_xai_transaction_date))
     conn.commit()
 
 # Function to get wallets from the database
